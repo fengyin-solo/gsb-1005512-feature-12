@@ -1,12 +1,14 @@
-"""关口计量接口：维护关口表计，覆盖确认正常、标记异常、停用表计等动作。"""
+"""关口计量接口：维护关口表计，覆盖抄表导入、结算对账导出、中断重取与状态流转。"""
 from __future__ import annotations
 
+import csv
+import io
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 
-from app.schemas import ActionResult, EntryPayload, PageResult
-from app.services.meter import MeterService
+from app.schemas import ActionResult, EntryPayload, MeterReadingImportPayload, MeterReadingImportResult, PageResult
+from app.services.meter import SETTLEMENT_FIELDS, MeterService
 
 router = APIRouter(prefix="/api/meter", tags=["关口计量"])
 
@@ -28,6 +30,39 @@ def list_entries(
         raise HTTPException(status_code=400, detail="每页最多 200 条，请缩小分页范围")
     items, total = service.list_entries(keyword=keyword, status=status, page=page, size=size)
     return PageResult(items=items, total=total, page=page, size=size)
+
+
+@router.get("/export")
+def export_entries() -> dict[str, Any]:
+    """导出关口计量清单：返回当前过滤条件下的全量数据。"""
+    items, total = service.list_entries(page=1, size=10000)
+    return {"module": "meter", "total": total, "items": items}
+
+
+@router.get("/settlement/export")
+def export_settlement(
+    month: str | None = Query(default=None, description="结算月份 YYYY-MM，缺省按当前列表口径导出"),
+) -> Response:
+    """导出结算电量对账文件：与关口表计列表读同一份数据，不另出一套结果。"""
+    rows = service.settlement_rows(month=month)
+    if not rows:
+        raise HTTPException(status_code=404, detail="该结算月没有可导出的结算电量，请先导入抄表文件")
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=SETTLEMENT_FIELDS, extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(rows)
+    filename = f"meter-settlement-{month or 'current'}.csv"
+    return Response(
+        content="\ufeff" + buffer.getvalue(),  # 带 BOM，Excel 打开中文不乱码
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@router.post("/import", response_model=MeterReadingImportResult)
+def import_readings(payload: MeterReadingImportPayload) -> MeterReadingImportResult:
+    """整批导入抄表文件：按表计编号匹配入库，匹配不上的行逐条打回并写明原因。"""
+    return MeterReadingImportResult(**service.import_readings(payload.batch_id, payload.rows))
 
 
 @router.get("/{entry_id}", response_model=dict)
@@ -58,8 +93,10 @@ def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
     return ActionResult(ok=True, message=message, entry=entry)
 
 
-@router.get("/export")
-def export_entries() -> dict[str, Any]:
-    """导出关口计量清单：返回当前过滤条件下的全量数据。"""
-    items, total = service.list_entries(page=1, size=10000)
-    return {"module": "meter", "total": total, "items": items}
+@router.post("/{entry_id}/fetch-reading", response_model=ActionResult)
+def fetch_reading(entry_id: int) -> ActionResult:
+    """通讯中断时重新采集示数：重取一次仍失败则按累计值顺延。"""
+    entry, message = service.fetch_reading(entry_id)
+    if entry is None:
+        return ActionResult(ok=False, message=message)
+    return ActionResult(ok=True, message=message, entry=entry)

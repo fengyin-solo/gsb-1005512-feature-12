@@ -28,6 +28,23 @@ class EntryPayload(BaseModel):
     remark: str | None = None
 
 
+class MeterReadingImportPayload(BaseModel):
+    """抄表文件导入：batch_id 标识一次导入批次，失败时凭它重试一次。"""
+
+    batch_id: str = ""
+    rows: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class MeterReadingImportResult(BaseModel):
+    """抄表导入结果：入库条数、逐行打回原因与是否还能重试。"""
+
+    ok: bool
+    message: str
+    imported: int = 0
+    rejected: list[dict[str, Any]] = Field(default_factory=list)
+    retryable: bool = False
+
+
 
 class PvArrayEntry(BaseModel):
     """光伏阵列明细结构。"""
