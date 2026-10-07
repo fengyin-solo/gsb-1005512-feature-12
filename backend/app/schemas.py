@@ -28,6 +28,36 @@ class EntryPayload(BaseModel):
     remark: str | None = None
 
 
+class MeterImportPayload(BaseModel):
+    """抄表文件一次性导入：直接提交 CSV 文本（UTF-8），按行解析、按表计编号匹配。"""
+
+    filename: str | None = None
+    content: str
+    month: str | None = Field(default=None, description="本次导入月份 YYYY-MM；文件行用抄表日期回填")
+
+
+class MeterImportLine(BaseModel):
+    """单条导入结果：成功行标明月份与是否覆盖，打回行写明行号与原因。"""
+
+    行号: int
+    表计编号: str | None = None
+    月份: str | None = None
+    覆盖: bool | None = None
+    原因: str | None = None
+
+
+class MeterImportResult(BaseModel):
+    ok: bool
+    total: int = 0
+    imported_count: int = 0
+    rejected_count: int = 0
+    imported: list[MeterImportLine] = Field(default_factory=list)
+    rejected: list[MeterImportLine] = Field(default_factory=list)
+    fatal: str | None = None
+    message: str | None = None
+    retried: bool = False
+
+
 
 class PvArrayEntry(BaseModel):
     """光伏阵列明细结构。"""

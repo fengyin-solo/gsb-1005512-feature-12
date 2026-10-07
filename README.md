@@ -74,3 +74,15 @@ npm run dev
   `backend/app/routers/<模块>.py`，业务规则在 `backend/app/services/<模块>.py`。
 - 列表接口统一返回 `{ items, total, page, size }`，动作接口统一返回 `{ ok, message }`。
 - 状态流转只允许在 `app/services` 里改，路由层不做业务判断。
+
+## 关口计量：抄表导入与结算对账
+
+- `POST /api/meter/imports`：一次性导入抄表 CSV（模板见 `GET /api/meter/import-template`）。
+  按表计编号匹配表计档案：匹配不上（或日期/数字非法、表码倒走）的行整笔打回并写明行号与原因，
+  其余照常入库；整体失败前端自动重试一次（重试幂等，可带 `retry=1`）。
+  同一计量点同一个月重复导入按 `(表计编号, 月份)` 整笔覆盖（version +1），不叠加。
+- 通讯中断取不到示数：导入或 `POST /api/meter/{id}/refetch` 都会先重新取一次，仍取不到按累计值顺延。
+- 列表、`/{id}` 明细、`/export`（JSON 或带 BOM 的 CSV）与 `/stats` 全部读 service 里同一份
+  `latest_views` 视图，不另出一套结果；不传 `month` 时取每块表最后一次导入值，重进页面不变。
+- 老抄表数据以 `meter_reading` 表按抄表日期回填，电量/示数按各表 `表计精度` 落库，
+  过往月份记录导入时不重算、不改精度。
